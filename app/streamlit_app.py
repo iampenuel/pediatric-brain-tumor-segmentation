@@ -1,5 +1,5 @@
 
-import os, glob, tempfile, urllib.request
+import os, glob, tempfile, urllib.request, urllib.error
 import numpy as np
 import streamlit as st
 import nibabel as nib
@@ -98,7 +98,6 @@ def get_subject_files(subject_id, data_root):
 
     mod_paths = []
     for m in MODS:
-        # handle folder-named-like *.nii/ containing real NIfTI
         folder_like = os.path.join(subj_dir, f"{subject_id}-{m}.nii")
         folder_like_gz = os.path.join(subj_dir, f"{subject_id}-{m}.nii.gz")
         direct_file = os.path.join(subj_dir, f"{subject_id}-{m}.nii")
@@ -136,15 +135,28 @@ def build_unet2d():
     )
 
 def ensure_file(local_path, url):
-    """Download once if missing."""
+    """Download once if missing. Shows HTTP error code if it fails."""
     if os.path.isfile(local_path) and os.path.getsize(local_path) > 1024:
         return local_path
     if not url:
         return None
     os.makedirs(os.path.dirname(local_path), exist_ok=True)
     st.info(f"Downloading model weights… ({os.path.basename(local_path)})")
-    urllib.request.urlretrieve(url, local_path)
-    return local_path
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req) as r, open(local_path, "wb") as f:
+            while True:
+                chunk = r.read(1024 * 1024)
+                if not chunk:
+                    break
+                f.write(chunk)
+        return local_path
+    except urllib.error.HTTPError as e:
+        st.error(
+            f"Model download failed: HTTP {e.code}. "
+            "Check Streamlit Secrets (BASELINE_URL / IMPROVED_URL) and make sure URLs are direct release-asset links."
+        )
+        raise
 
 @st.cache_resource
 def load_model_cached(ckpt_path, device_str):
@@ -166,6 +178,41 @@ def infer_slice_prob(model, mods_4, z, device_str):
     prob = torch.sigmoid(logits).squeeze().detach().cpu().numpy().astype(np.float32)
     return prob
 
+def find_best_slice_gt(seg_bin):
+    """Pick slice with max GT tumor pixels."""
+    areas = seg_bin.reshape(-1, seg_bin.shape[-1]).sum(axis=0)
+    return int(np.argmax(areas))
+
+@torch.no_grad()
+def find_best_slice_pred(model, mods_4, device_str, threshold=0.5, stride=2):
+    """
+    Pick slice with max predicted tumor pixels.
+    stride=2 scans every other slice to speed up; refine locally afterwards.
+    """
+    D = mods_4[0].shape[-1]
+    best_z = D // 2
+    best_area = -1
+
+    # coarse scan
+    for z in range(0, D, stride):
+        prob = infer_slice_prob(model, mods_4, z, device_str)
+        area = int((prob >= threshold).sum())
+        if area > best_area:
+            best_area = area
+            best_z = z
+
+    # refine around best_z
+    lo = max(0, best_z - stride)
+    hi = min(D - 1, best_z + stride)
+    for z in range(lo, hi + 1):
+        prob = infer_slice_prob(model, mods_4, z, device_str)
+        area = int((prob >= threshold).sum())
+        if area > best_area:
+            best_area = area
+            best_z = z
+
+    return int(best_z), int(best_area)
+
 # -------------------------
 # Sidebar
 # -------------------------
@@ -184,11 +231,8 @@ st.markdown("### Choose input mode")
 tab_upload, tab_local = st.tabs(["🌐 Upload Mode (recommended for Cloud)", "💻 Local Dataset Mode (your machine)"])
 
 # -------------------------
-# Get model checkpoint (Cloud-friendly)
+# Model checkpoint (Cloud-friendly)
 # -------------------------
-# Prefer secrets for public URLs:
-# BASELINE_URL="https://github.com/.../releases/download/v1/best_unet2d_binary.pt"
-# IMPROVED_URL="https://github.com/.../releases/download/v1/best_unet2d_binary_aug_focal.pt"
 baseline_url = st.secrets.get("BASELINE_URL", "")
 improved_url = st.secrets.get("IMPROVED_URL", "")
 
@@ -205,7 +249,6 @@ if ckpt_path is None:
     st.error("Model checkpoint not available. Add BASELINE_URL and IMPROVED_URL in Streamlit Cloud Secrets.")
     st.stop()
 
-# Load model
 model = load_model_cached(ckpt_path, device_str)
 
 # -------------------------
@@ -231,16 +274,38 @@ with tab_upload:
     p_t1n = save_upload_to_temp(up_t1n)
     p_t2w = save_upload_to_temp(up_t2w)
     p_t2f = save_upload_to_temp(up_t2f)
+
     seg_path = save_upload_to_temp(up_seg) if (up_seg and show_gt) else None
 
     mods = [zscore_normalize(load_nifti(p)) for p in [p_t1c, p_t1n, p_t2w, p_t2f]]
+
     seg_bin = None
     if seg_path is not None:
         seg = load_seg(seg_path)
         seg_bin = (seg > 0).astype(np.uint8)
 
+    # init session state for z
     D = mods[0].shape[-1]
-    z = st.slider("Axial slice index (z)", 0, D - 1, D // 2, 1, key="upload_z")
+    if "upload_z" not in st.session_state:
+        st.session_state["upload_z"] = D // 2
+
+    # Find best slice controls
+    b1, b2 = st.columns([1, 2])
+    with b1:
+        if st.button("🎯 Find best slice", use_container_width=True):
+            if seg_bin is not None:
+                st.session_state["upload_z"] = find_best_slice_gt(seg_bin)
+                st.success(f"Jumped to GT max-area slice: z={st.session_state['upload_z']}")
+            else:
+                with st.spinner("Scanning slices to find strongest prediction…"):
+                    z_best, area = find_best_slice_pred(model, mods, device_str, threshold=threshold, stride=2)
+                st.session_state["upload_z"] = z_best
+                st.success(f"Jumped to predicted max-area slice: z={z_best} (area={area})")
+    with b2:
+        st.caption("If GT is uploaded, this jumps to the slice with the most tumor. Otherwise it scans predictions to find the strongest slice.")
+
+    z = st.slider("Axial slice index (z)", 0, D - 1, int(st.session_state["upload_z"]), 1, key="upload_z_slider")
+    st.session_state["upload_z"] = z
 
     prob = infer_slice_prob(model, mods, z, device_str)
     pred = (prob >= threshold).astype(np.uint8)
@@ -276,11 +341,7 @@ with tab_local:
     st.caption("This mode is for running locally with your downloaded BraTS-PEDs dataset folder.")
 
     data_root = st.text_input("DATA_ROOT (BraTS-PEDs2024_Training)", value=os.environ.get("BRATS_DATA_ROOT", ""))
-
-    valid_list_path = st.text_input(
-        "valid_subjects.txt (optional)",
-        value=os.environ.get("BRATS_VALID_LIST", "")
-    )
+    valid_list_path = st.text_input("valid_subjects.txt (optional)", value=os.environ.get("BRATS_VALID_LIST", ""))
 
     def list_subjects(data_root, valid_list_path):
         if os.path.isfile(valid_list_path):
@@ -307,7 +368,21 @@ with tab_local:
         st.stop()
 
     D = seg_bin.shape[-1]
-    z = st.slider("Axial slice index (z)", 0, D - 1, D // 2, 1, key="local_z")
+    if "local_z" not in st.session_state:
+        st.session_state["local_z"] = D // 2
+
+    # Find best slice controls
+    b1, b2 = st.columns([1, 2])
+    with b1:
+        if st.button("🎯 Find best slice (local)", use_container_width=True):
+            if seg_bin is not None:
+                st.session_state["local_z"] = find_best_slice_gt(seg_bin)
+                st.success(f"Jumped to GT max-area slice: z={st.session_state['local_z']}")
+    with b2:
+        st.caption("Local mode uses GT to jump to the slice with the most tumor.")
+
+    z = st.slider("Axial slice index (z)", 0, D - 1, int(st.session_state["local_z"]), 1, key="local_z_slider")
+    st.session_state["local_z"] = z
 
     prob = infer_slice_prob(model, mods, z, device_str)
     pred = (prob >= threshold).astype(np.uint8)
