@@ -6,9 +6,9 @@ import nibabel as nib
 import torch
 from monai.networks.nets import UNet
 
-st.set_page_config(page_title="Pediatric Brain Tumor Segmentation Demo", layout="wide")
+st.set_page_config(page_title="Pediatric Brain Tumor Segmentation", layout="wide")
 
-st.title("Pediatric Brain Tumor Segmentation (BraTS-PEDs 2024) — Demo")
+st.title("Pediatric Brain Tumor Segmentation")
 st.markdown(
     """
 > ⚠️ **Educational / research demo only.**  
