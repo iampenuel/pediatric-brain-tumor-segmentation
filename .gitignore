@@ -23,12 +23,12 @@ data/
 content/
 drive/
 
-# Models (not included)
+# Model checkpoints (keep out unless using Git LFS)
 models/
 *.pt
 *.pth
 
-# Results: keep only figures
+# Results: keep only figures (portfolio-friendly)
 results/*
 !results/figures/
 !results/figures/*.png
