@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+.env
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+
+# Data (DO NOT COMMIT)
+data/
+**/BraTS-PEDs2024_Training/
+*.nii
+*.nii.gz
+
+# Colab/Drive artifacts
+content/
+drive/
+
+# Models (not included)
+models/
+*.pt
+*.pth
+
+# Results: keep only figures
+results/*
+!results/figures/
+!results/figures/*.png
+!results/figures/*.jpg
+!results/figures/*.jpeg

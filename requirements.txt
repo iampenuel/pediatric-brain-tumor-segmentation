@@ -1,0 +1,9 @@
+torch
+monai>=1.3.0
+nibabel
+numpy
+pandas
+matplotlib
+tqdm
+scikit-learn
+streamlit
