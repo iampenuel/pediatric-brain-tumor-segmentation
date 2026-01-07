@@ -95,16 +95,6 @@ To make evaluation stable and patient-level:
 
 ---
 
-## Streamlit Demo (planned)
-A lightweight demo app will allow:
-- selecting a patient + slice slider
-- viewing MRI slice + predicted mask overlay
-- optional GT overlay toggle (if available)
-
-> This will remain an educational demo with a clear disclaimer.
-
----
-
 ## Technologies Used
 - **Language:** Python
 - **Core libraries:** NumPy, Pandas, PyTorch, MONAI, nibabel, scikit-learn, Matplotlib
