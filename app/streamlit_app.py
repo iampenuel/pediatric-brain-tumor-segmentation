@@ -2,6 +2,45 @@
 import os, glob, tempfile, urllib.request, urllib.error
 import numpy as np
 import streamlit as st
+
+from PIL import Image
+
+def safe_to_pil(img):
+    """Convert numpy/PIL to a safe PIL Image for st.image."""
+    if img is None:
+        return None
+    if isinstance(img, Image.Image):
+        return img
+
+    import numpy as np
+
+    if isinstance(img, np.ndarray):
+        # Handle float images 0..1 or 0..255
+        if img.dtype != np.uint8:
+            # if looks like 0..1, scale up
+            mx = float(np.max(img)) if img.size else 0.0
+            if mx <= 1.5:
+                img = (img * 255.0)
+            img = np.clip(img, 0, 255).astype(np.uint8)
+
+        # Ensure 3-channel RGB
+        if img.ndim == 2:
+            img = np.stack([img]*3, axis=-1)
+        if img.ndim == 3 and img.shape[-1] == 4:
+            img = img[:, :, :3]
+        return Image.fromarray(img)
+
+    # fallback: let streamlit try
+    return img
+
+def safe_st_image(img, caption=None):
+    """st.image that works across streamlit versions."""
+    img = safe_to_pil(img)
+    try:
+        st.image(img, caption=caption, use_container_width=True)
+    except TypeError:
+        st.image(img, caption=caption, use_column_width=True)
+
 import nibabel as nib
 import torch
 from monai.networks.nets import UNet
@@ -320,7 +359,7 @@ with tab_upload:
     left, right = st.columns([1.2, 1.0])
     with left:
         st.subheader("Overlay view")
-        st.image(overlay, use_container_width=True)
+        safe_st_image(overlay)
 
     with right:
         st.subheader("Slice summary")
