@@ -37,9 +37,9 @@ def safe_st_image(img, caption=None):
     """st.image that works across streamlit versions."""
     img = safe_to_pil(img)
     try:
-        st.image(img, caption=caption, use_container_width=True)
+        safe_st_image(img, caption=caption)
     except TypeError:
-        st.image(img, caption=caption, use_column_width=True)
+        safe_st_image(img, caption=caption)
 
 import nibabel as nib
 import torch
@@ -371,7 +371,7 @@ with tab_upload:
 
     with st.expander("Show probability map (debug)"):
         prob_01 = normalize_01(prob)
-        st.image((prob_01 * 255).astype(np.uint8), caption="Sigmoid prob map (rescaled 0–255)", use_container_width=True)
+        safe_st_image((prob_01 * 255).astype(np.uint8), caption="Sigmoid prob map (rescaled 0–255)")
 
 # -------------------------
 # Local Dataset Mode (your machine)
@@ -436,7 +436,7 @@ with tab_local:
     left, right = st.columns([1.2, 1.0])
     with left:
         st.subheader("Overlay view")
-        st.image(overlay, caption=f"{subject_id} | z={z} | model={model_choice} | thr={threshold:.2f}", use_container_width=True)
+        safe_st_image(overlay, caption=f"{subject_id} | z={z} | model={model_choice} | thr={threshold:.2f}")
 
     with right:
         st.subheader("Slice summary")
